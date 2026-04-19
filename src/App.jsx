@@ -25,28 +25,34 @@ const STAGE_COLORS = {
   "Cancelled":      { bg: "#3b0f0f", text: "#f87171", border: "#dc2626" },
 };
 
-function calcCommission(plan, months = 3) {
-  const p = PLANS[plan];
-  if (!p) return { setter: 0, closer: 0, total: 0, schedule: [] };
-  const setupSetter = +(p.setup * 0.1).toFixed(2);
-  const setupCloser = +(p.setup * 0.2).toFixed(2);
-  if (p.type === "oneoff") {
-    return {
-      setter: setupSetter,
-      closer: setupCloser,
-      total: +(p.setup * 0.3).toFixed(2),
-      schedule: [{ month: 0, label: "One-Off", setter: setupSetter, closer: setupCloser }],
-    };
+function calcCommissionCustom(monthlyFee, setupFee, months = 3) {
+  const monthly = parseFloat(monthlyFee) || 0;
+  const setup = parseFloat(setupFee) || 0;
+  const schedule = [];
+
+  if (setup > 0) {
+    schedule.push({
+      month: 0,
+      label: "Setup / One-Off",
+      setter: +(setup * 0.1).toFixed(2),
+      closer: +(setup * 0.2).toFixed(2),
+    });
   }
-  const schedule = [{ month: 0, label: "Setup", setter: setupSetter, closer: setupCloser }];
+
   for (let m = 1; m <= months; m++) {
-    const s = m === 1 ? +(p.monthly * 0.1).toFixed(2) : 0;
-    const c = +(p.monthly * 0.2).toFixed(2);
-    schedule.push({ month: m, label: `Month ${m}`, setter: s, closer: c });
+    if (monthly > 0) {
+      schedule.push({
+        month: m,
+        label: `Month ${m}`,
+        setter: +(monthly * 0.1).toFixed(2),
+        closer: +(monthly * 0.2).toFixed(2),
+      });
+    }
   }
-  const setter = schedule.reduce((a, r) => a + r.setter, 0);
-  const closer = schedule.reduce((a, r) => a + r.closer, 0);
-  return { setter: +setter.toFixed(2), closer: +closer.toFixed(2), total: +(setter + closer).toFixed(2), schedule };
+
+  const setter = +schedule.reduce((a, r) => a + r.setter, 0).toFixed(2);
+  const closer = +schedule.reduce((a, r) => a + r.closer, 0).toFixed(2);
+  return { setter, closer, total: +(setter + closer).toFixed(2), schedule };
 }
 
 function daysSince(dateStr) {
@@ -58,26 +64,26 @@ const emptyDeal = () => ({
   clientName: "",
   clientEmail: "",
   clientPhone: "",
-  plan: "plan1",
+  monthlyFee: "",
+  setupFee: "",
   stage: "New Lead",
   saleDate: new Date().toISOString().split("T")[0],
   notes: "",
   activityLog: [],
-  commissionPaid: [false, false, false, false],
+  commissionPaid: [false, false, false, false, false],
   clawback: false,
   createdAt: new Date().toISOString(),
-  plan: "plan1",
 });
 
-const STORAGE_KEY = "rma_crm_deals_v1";
+const STORAGE_KEY = "ghl_crm_deals_v2";
 
 async function saveDeals(deals) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(deals)); } catch (e) {}
+  try { await window.storage.set(STORAGE_KEY, JSON.stringify(deals)); } catch (e) {}
 }
 async function loadDeals() {
   try {
-    const r = localStorage.getItem(STORAGE_KEY);
-    return r ? JSON.parse(r) : [];
+    const r = await window.storage.get(STORAGE_KEY);
+    return r ? JSON.parse(r.value) : [];
   } catch { return []; }
 }
 
@@ -164,29 +170,30 @@ export default function App() {
   };
 
   // Stats
-  const activeSaas = deals.filter(d => d.stage === "Active Client" && PLANS[d.plan]?.type === "saas");
+  const activeSaas = deals.filter(d => d.stage === "Active Client" && (parseFloat(d.monthlyFee) || 0) > 0);
   const closedDeals = deals.filter(d => d.stage === "Closed Won" || d.stage === "Active Client");
   const totalRevenue = closedDeals.reduce((a, d) => {
-    const p = PLANS[d.plan];
-    return a + (p.type === "saas" ? p.setup + p.monthly * 3 : p.setup);
+    const monthly = parseFloat(d.monthlyFee) || 0;
+    const setup = parseFloat(d.setupFee) || 0;
+    return a + setup + monthly * 3;
   }, 0);
   const totalCommOwed = deals.reduce((a, d) => {
     if (d.clawback) return a;
-    const c = calcCommission(d.plan);
+    const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     const paid = d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0;
     return a + c.total - paid;
   }, 0);
   const totalCommPaid = deals.reduce((a, d) => {
-    const c = calcCommission(d.plan);
+    const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     return a + (d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0);
   }, 0);
   const clawbacks = deals.filter(d => d.clawback).length;
-  const mrr = activeSaas.reduce((a, d) => a + (PLANS[d.plan]?.monthly || 0), 0);
+  const mrr = activeSaas.reduce((a, d) => a + (parseFloat(d.monthlyFee) || 0), 0);
 
   const filtered = filterStage === "All" ? deals : deals.filter(d => d.stage === filterStage);
 
   const detailDeal = selectedDeal ? deals.find(d => d.id === selectedDeal) : null;
-  const detailComm = detailDeal ? calcCommission(detailDeal.plan) : null;
+  const detailComm = detailDeal ? calcCommissionCustom(detailDeal.monthlyFee, detailDeal.setupFee) : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#080c14", color: "#e2e8f0", fontFamily: "'DM Mono', 'Courier New', monospace" }}>
@@ -284,13 +291,14 @@ export default function App() {
             <div className="section-label">Recent Deals</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {deals.slice(0, 5).map(d => {
-                const sc = STAGE_COLORS[d.stage];
-                const comm = calcCommission(d.plan);
+                const sc = STAGE_COLORS[d.stage] || STAGE_COLORS["New Lead"];
+                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
+                const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ") || "No fees set";
                 return (
                   <div key={d.id} className="deal-row" onClick={() => { setSelectedDeal(d.id); setView("deals"); }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 500, color: "#f1f5f9" }}>{d.clientName}</div>
-                      <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{PLANS[d.plan]?.label}</div>
+                      <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{feeLabel}</div>
                     </div>
                     <span className="badge" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{d.stage}</span>
                     <div style={{ textAlign: "right", minWidth: 80 }}>
@@ -323,8 +331,9 @@ export default function App() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {filtered.map(d => {
-                  const sc = STAGE_COLORS[d.stage];
-                  const comm = calcCommission(d.plan);
+                  const sc = STAGE_COLORS[d.stage] || STAGE_COLORS["New Lead"];
+                  const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
+                  const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ") || "No fees set";
                   const isSelected = selectedDeal === d.id;
                   return (
                     <div key={d.id} className={`deal-row ${isSelected ? "selected" : ""}`} onClick={() => setSelectedDeal(isSelected ? null : d.id)}>
@@ -332,7 +341,7 @@ export default function App() {
                         <div style={{ fontSize: 14, color: "#f1f5f9", fontWeight: 500 }}>{d.clientName}</div>
                         <div style={{ fontSize: 11, color: "#475569", marginTop: 2 }}>{d.clientEmail || "—"} · {d.saleDate}</div>
                       </div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>{PLANS[d.plan]?.label}</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>{feeLabel}</div>
                       <span className="badge" style={{ background: sc.bg, color: sc.text, borderColor: sc.border }}>{d.stage}</span>
                       <div style={{ textAlign: "right", minWidth: 70 }}>
                         <div style={{ fontSize: 13, color: "#f59e0b" }}>£{comm.total}</div>
@@ -375,11 +384,15 @@ export default function App() {
                     })}
                   </div>
 
-                  {/* Plan & dates */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                  {/* Fees & dates */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
                     <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Plan</div>
-                      <div style={{ fontSize: 12, color: "#f59e0b" }}>{PLANS[detailDeal.plan]?.label}</div>
+                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Monthly Fee</div>
+                      <div style={{ fontSize: 12, color: "#f59e0b" }}>{detailDeal.monthlyFee ? `£${detailDeal.monthlyFee}` : "—"}</div>
+                    </div>
+                    <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Setup / One-Off</div>
+                      <div style={{ fontSize: 12, color: "#f59e0b" }}>{detailDeal.setupFee ? `£${detailDeal.setupFee}` : "—"}</div>
                     </div>
                     <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
                       <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Sale Date</div>
@@ -468,15 +481,16 @@ export default function App() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {deals.map(d => {
-                const comm = calcCommission(d.plan);
+                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                 const paidTotal = d.commissionPaid?.reduce((s, v, i) => s + (v ? (comm.schedule[i]?.setter || 0) + (comm.schedule[i]?.closer || 0) : 0), 0) || 0;
                 const owed = d.clawback ? 0 : comm.total - paidTotal;
+                const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ") || "No fees set";
                 return (
                   <div key={d.id} className="card" style={{ border: d.clawback ? "1px solid #7f1d1d" : "1px solid #1e293b" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div>
                         <span style={{ fontWeight: 500, color: "#f1f5f9" }}>{d.clientName}</span>
-                        <span style={{ marginLeft: 10, fontSize: 11, color: "#475569" }}>{PLANS[d.plan]?.label}</span>
+                        <span style={{ marginLeft: 10, fontSize: 11, color: "#475569" }}>{feeLabel}</span>
                         {d.clawback && <span style={{ marginLeft: 8, fontSize: 10, color: "#f87171", background: "#3b0f0f", padding: "2px 8px", borderRadius: 4 }}>⚠ CLAWBACK</span>}
                       </div>
                       <div style={{ textAlign: "right" }}>
@@ -527,11 +541,15 @@ export default function App() {
                   <input value={form.clientPhone} onChange={e => setForm(f => ({ ...f, clientPhone: e.target.value }))} placeholder="+44..." />
                 </div>
               </div>
-              <div>
-                <div className="section-label">Plan</div>
-                <select value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))}>
-                  {Object.entries(PLANS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <div className="section-label">Monthly Fee (£)</div>
+                  <input type="number" min="0" value={form.monthlyFee} onChange={e => setForm(f => ({ ...f, monthlyFee: e.target.value }))} placeholder="e.g. 197" />
+                </div>
+                <div>
+                  <div className="section-label">One-Off / Setup Fee (£)</div>
+                  <input type="number" min="0" value={form.setupFee} onChange={e => setForm(f => ({ ...f, setupFee: e.target.value }))} placeholder="e.g. 297" />
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
@@ -552,14 +570,26 @@ export default function App() {
 
               {/* Commission Preview */}
               <div style={{ background: "#0f172a", borderRadius: 8, padding: 14, border: "1px solid #1e293b" }}>
-                <div className="section-label">Commission Preview</div>
+                <div className="section-label">Commission Preview (Setter 10% · Closer 20% · 3 months)</div>
                 {(() => {
-                  const c = calcCommission(form.plan);
+                  const c = calcCommissionCustom(form.monthlyFee, form.setupFee);
                   return (
-                    <div style={{ display: "flex", gap: 16 }}>
-                      <div><div style={{ fontSize: 10, color: "#475569" }}>Setter earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.setter}</div></div>
-                      <div><div style={{ fontSize: 10, color: "#475569" }}>Closer earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.closer}</div></div>
-                      <div><div style={{ fontSize: 10, color: "#475569" }}>Total</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.total}</div></div>
+                    <div>
+                      <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
+                        <div><div style={{ fontSize: 10, color: "#475569" }}>Setter earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.setter}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#475569" }}>Closer earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.closer}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#475569" }}>Total</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.total}</div></div>
+                      </div>
+                      {c.schedule.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {c.schedule.map((row, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#64748b" }}>
+                              <span>{row.label}</span>
+                              <span>S: £{row.setter} · C: £{row.closer} · Total: £{(row.setter + row.closer).toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
