@@ -479,6 +479,83 @@ export default function App() {
               ))}
             </div>
 
+            {/* Due This Month Filter */}
+            {(() => {
+              const now = new Date();
+              const thisMonth = now.getMonth();
+              const thisYear = now.getFullYear();
+
+              const dueThisMonth = deals.filter(d => {
+                if (d.clawback) return false;
+                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
+                return comm.schedule.some((row, i) => {
+                  if (d.commissionPaid?.[i]) return false;
+                  const saleDate = new Date(d.saleDate);
+                  const dueDate = new Date(saleDate);
+                  dueDate.setMonth(dueDate.getMonth() + row.month);
+                  return dueDate.getMonth() === thisMonth && dueDate.getFullYear() === thisYear;
+                });
+              });
+
+              const dueTotal = dueThisMonth.reduce((a, d) => {
+                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
+                return a + comm.schedule.reduce((s, row, i) => {
+                  if (d.commissionPaid?.[i]) return s;
+                  const saleDate = new Date(d.saleDate);
+                  const dueDate = new Date(saleDate);
+                  dueDate.setMonth(dueDate.getMonth() + row.month);
+                  if (dueDate.getMonth() === thisMonth && dueDate.getFullYear() === thisYear) {
+                    return s + row.setter + row.closer;
+                  }
+                  return s;
+                }, 0);
+              }, 0);
+
+              return dueThisMonth.length > 0 ? (
+                <div style={{ background: "#1a1200", border: "1px solid #f59e0b", borderRadius: 10, padding: 16, marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "#f59e0b" }}>
+                      🗓 Due This Month
+                    </div>
+                    <div style={{ fontSize: 13, color: "#f59e0b" }}>Total: £{dueTotal.toFixed(2)}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {dueThisMonth.map(d => {
+                      const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
+                      const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ");
+                      return (
+                        <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
+                          <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>{d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span></div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {comm.schedule.map((row, i) => {
+                              if (d.commissionPaid?.[i]) return null;
+                              const saleDate = new Date(d.saleDate);
+                              const dueDate = new Date(saleDate);
+                              dueDate.setMonth(dueDate.getMonth() + row.month);
+                              if (dueDate.getMonth() !== thisMonth || dueDate.getFullYear() !== thisYear) return null;
+                              const rowTotal = row.setter + row.closer;
+                              return (
+                                <button key={i} onClick={() => togglePaid(d.id, i)}
+                                  style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                                  Pay {row.label}: £{rowTotal.toFixed(2)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ background: "#0d1420", border: "1px solid #1e293b", borderRadius: 10, padding: 14, marginBottom: 20, color: "#475569", fontSize: 13 }}>
+                  ✅ Nothing due this month
+                </div>
+              );
+            })()}
+
+            {/* All Deals */}
+            <div className="section-label">All Commission Records</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {deals.map(d => {
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
@@ -502,10 +579,15 @@ export default function App() {
                       {comm.schedule.map((row, i) => {
                         const isPaid = d.commissionPaid?.[i];
                         const rowTotal = row.setter + row.closer;
-                        return (
-                          <button key={i} onClick={() => togglePaid(d.id, i)}
-                            style={{ background: isPaid ? "#14532d" : "#0f172a", border: `1px solid ${isPaid ? "#16a34a" : "#1e293b"}`, color: isPaid ? "#4ade80" : "#64748b", borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: "pointer", opacity: d.clawback ? 0.4 : 1 }}>
-                            {row.label}: £{rowTotal.toFixed(2)} {isPaid ? "✓" : "○"}
+                        return isPaid ? (
+                          <div key={i}
+                            style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11, opacity: d.clawback ? 0.4 : 1 }}>
+                            {row.label}: £{rowTotal.toFixed(2)} ✓ Paid
+                          </div>
+                        ) : (
+                          <button key={i} onClick={() => !d.clawback && togglePaid(d.id, i)}
+                            style={{ background: "#0f172a", border: "1px solid #1e293b", color: "#64748b", borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: d.clawback ? "not-allowed" : "pointer", opacity: d.clawback ? 0.4 : 1 }}>
+                            {row.label}: £{rowTotal.toFixed(2)} ○ Unpaid
                           </button>
                         );
                       })}
