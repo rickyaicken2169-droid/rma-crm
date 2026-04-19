@@ -13,7 +13,7 @@ const PLANS = {
   plan10: { label: "£595 One-Off",          setup: 595, monthly: 0,   type: "oneoff" },
 };
 
-const STAGES = ["New Lead", "Call Booked", "Call Completed", "Closed Won", "Active Client", "Follow Up", "Cancelled"];
+const STAGES = ["New Lead", "Call Booked", "Call Completed", "Closed Won", "Active Client", "Follow Up", "Cancelled", "Paid"];
 
 const STAGE_COLORS = {
   "New Lead":       { bg: "#1e293b", text: "#94a3b8", border: "#334155" },
@@ -23,6 +23,7 @@ const STAGE_COLORS = {
   "Active Client":  { bg: "#1a3a2e", text: "#34d399", border: "#059669" },
   "Follow Up":      { bg: "#292524", text: "#fbbf24", border: "#d97706" },
   "Cancelled":      { bg: "#3b0f0f", text: "#f87171", border: "#dc2626" },
+  "Paid":           { bg: "#1a0a3a", text: "#c084fc", border: "#7c3aed" },
 };
 
 function calcCommissionCustom(monthlyFee, setupFee, months = 3) {
@@ -159,15 +160,15 @@ export default function App() {
     setNewNote("");
   };
 
-  const markClawback = (dealId) => {
-    setDeals(prev => prev.map(d => d.id === dealId ? { ...d, clawback: !d.clawback, stage: !d.clawback ? "Cancelled" : d.stage } : d));
-  };
-
   const updateStage = (dealId, stage) => {
+    if (stage === "Paid") {
+      setUnlockTarget({ dealId, stage: "Paid" });
+      setUnlockPassword("");
+      return;
+    }
     setDeals(prev => prev.map(d => {
       if (d.id !== dealId) return d;
-      const clawback = stage === "Cancelled" && PLANS[d.plan]?.type === "saas" && daysSince(d.saleDate) <= 90;
-      return { ...d, stage, clawback };
+      return { ...d, stage };
     }));
   };
 
@@ -480,40 +481,18 @@ export default function App() {
 
             {/* Due This Month Filter */}
             {(() => {
-              const now = new Date();
-              const thisMonth = now.getMonth();
-              const thisYear = now.getFullYear();
-
-              const dueThisMonth = deals.filter(d => {
-                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
-                return comm.schedule.some((row, i) => {
-                  if (d.commissionPaid?.[i]) return false;
-                  const saleDate = new Date(d.saleDate);
-                  const dueDate = new Date(saleDate);
-                  dueDate.setMonth(dueDate.getMonth() + row.month);
-                  return dueDate.getMonth() === thisMonth && dueDate.getFullYear() === thisYear;
-                });
-              });
-
+              const dueThisMonth = deals.filter(d => d.stage === "Paid");
               const dueTotal = dueThisMonth.reduce((a, d) => {
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
-                return a + comm.schedule.reduce((s, row, i) => {
-                  if (d.commissionPaid?.[i]) return s;
-                  const saleDate = new Date(d.saleDate);
-                  const dueDate = new Date(saleDate);
-                  dueDate.setMonth(dueDate.getMonth() + row.month);
-                  if (dueDate.getMonth() === thisMonth && dueDate.getFullYear() === thisYear) {
-                    return s + row.setter + row.closer;
-                  }
-                  return s;
-                }, 0);
+                const unpaid = comm.schedule.reduce((s, row, i) => s + (d.commissionPaid?.[i] ? 0 : row.setter + row.closer), 0);
+                return a + unpaid;
               }, 0);
 
               return dueThisMonth.length > 0 ? (
                 <div style={{ background: "#1a1200", border: "1px solid #f59e0b", borderRadius: 10, padding: 16, marginBottom: 20 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                     <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "#f59e0b" }}>
-                      🗓 Due This Month
+                      🗓 Due This Month — Client Has Paid
                     </div>
                     <div style={{ fontSize: 13, color: "#f59e0b" }}>Total: £{dueTotal.toFixed(2)}</div>
                   </div>
@@ -526,16 +505,15 @@ export default function App() {
                           <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>{d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span></div>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             {comm.schedule.map((row, i) => {
-                              if (d.commissionPaid?.[i]) return null;
-                              const saleDate = new Date(d.saleDate);
-                              const dueDate = new Date(saleDate);
-                              dueDate.setMonth(dueDate.getMonth() + row.month);
-                              if (dueDate.getMonth() !== thisMonth || dueDate.getFullYear() !== thisYear) return null;
-                              const rowTotal = row.setter + row.closer;
+                              if (d.commissionPaid?.[i]) return (
+                                <div key={i} style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11 }}>
+                                  {row.label}: £{(row.setter + row.closer).toFixed(2)} ✓ Paid
+                                </div>
+                              );
                               return (
                                 <button key={i} onClick={() => togglePaid(d.id, i)}
                                   style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                                  Pay {row.label}: £{rowTotal.toFixed(2)}
+                                  Pay {row.label}: £{(row.setter + row.closer).toFixed(2)}
                                 </button>
                               );
                             })}
@@ -692,8 +670,14 @@ export default function App() {
       {unlockTarget && (
         <div className="modal-backdrop" onClick={() => setUnlockTarget(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 360 }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>🔓 Unlock Payment</div>
-            <div style={{ fontSize: 12, color: "#475569", marginBottom: 20 }}>Enter your password to reverse this payment.</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>
+              {unlockTarget.stage === "Paid" ? "🔒 Mark as Paid" : "🔓 Unlock Payment"}
+            </div>
+            <div style={{ fontSize: 12, color: "#475569", marginBottom: 20 }}>
+              {unlockTarget.stage === "Paid"
+                ? "Enter your password to mark this deal as Paid. This confirms the client has paid and commission is due."
+                : "Enter your password to reverse this payment."}
+            </div>
             <input
               type="password"
               value={unlockPassword}
@@ -701,10 +685,15 @@ export default function App() {
               onKeyDown={e => {
                 if (e.key === "Enter") {
                   if (unlockPassword === UNLOCK_PASSWORD) {
-                    togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                    if (unlockTarget.stage === "Paid") {
+                      setDeals(prev => prev.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d));
+                      showToast("Deal marked as Paid ✓");
+                    } else {
+                      togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                      showToast("Payment reversed");
+                    }
                     setUnlockTarget(null);
                     setUnlockPassword("");
-                    showToast("Payment reversed");
                   } else {
                     showToast("Incorrect password", "error");
                     setUnlockPassword("");
@@ -718,10 +707,15 @@ export default function App() {
               <button className="btn-ghost" onClick={() => setUnlockTarget(null)}>Cancel</button>
               <button className="btn-primary" onClick={() => {
                 if (unlockPassword === UNLOCK_PASSWORD) {
-                  togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                  if (unlockTarget.stage === "Paid") {
+                    setDeals(prev => prev.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d));
+                    showToast("Deal marked as Paid ✓");
+                  } else {
+                    togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                    showToast("Payment reversed");
+                  }
                   setUnlockTarget(null);
                   setUnlockPassword("");
-                  showToast("Payment reversed");
                 } else {
                   showToast("Incorrect password", "error");
                   setUnlockPassword("");
