@@ -484,8 +484,10 @@ export default function App() {
               const dueThisMonth = deals.filter(d => d.stage === "Paid");
               const dueTotal = dueThisMonth.reduce((a, d) => {
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
-                const unpaid = comm.schedule.reduce((s, row, i) => s + (d.commissionPaid?.[i] ? 0 : row.setter + row.closer), 0);
-                return a + unpaid;
+                const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
+                if (nextUnpaidIdx === -1) return a;
+                const row = comm.schedule[nextUnpaidIdx];
+                return a + row.setter + row.closer;
               }, 0);
 
               return dueThisMonth.length > 0 ? (
@@ -500,23 +502,32 @@ export default function App() {
                     {dueThisMonth.map(d => {
                       const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                       const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ");
+                      const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
+                      if (nextUnpaidIdx === -1) return (
+                        <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
+                          <div style={{ fontSize: 13, color: "#4ade80" }}>{d.clientName} — ✓ All commission paid</div>
+                        </div>
+                      );
+                      const row = comm.schedule[nextUnpaidIdx];
+                      const rowTotal = row.setter + row.closer;
                       return (
                         <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
-                          <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>{d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span></div>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            {comm.schedule.map((row, i) => {
-                              if (d.commissionPaid?.[i]) return (
-                                <div key={i} style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11 }}>
-                                  {row.label}: £{(row.setter + row.closer).toFixed(2)} ✓ Paid
-                                </div>
-                              );
-                              return (
-                                <button key={i} onClick={() => togglePaid(d.id, i)}
-                                  style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                                  Pay {row.label}: £{(row.setter + row.closer).toFixed(2)}
-                                </button>
-                              );
-                            })}
+                          <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>
+                            {d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <button onClick={() => togglePaid(d.id, nextUnpaidIdx)}
+                              style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                              Pay {row.label}: £{rowTotal.toFixed(2)}
+                            </button>
+                            <span style={{ fontSize: 11, color: "#475569" }}>
+                              S: £{row.setter} · C: £{row.closer}
+                            </span>
+                            {nextUnpaidIdx < comm.schedule.length - 1 && (
+                              <span style={{ fontSize: 10, color: "#334155" }}>
+                                {comm.schedule.length - nextUnpaidIdx - 1} more payment{comm.schedule.length - nextUnpaidIdx - 1 > 1 ? "s" : ""} to follow
+                              </span>
+                            )}
                           </div>
                         </div>
                       );
