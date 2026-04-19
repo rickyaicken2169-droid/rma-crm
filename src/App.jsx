@@ -151,6 +151,15 @@ export default function App() {
     }));
   };
 
+  const markMultiplePaid = (dealId, indices) => {
+    setDeals(prev => prev.map(d => {
+      if (d.id !== dealId) return d;
+      const cp = [...d.commissionPaid];
+      indices.forEach(i => { cp[i] = true; });
+      return { ...d, commissionPaid: cp };
+    }));
+  };
+
   const addActivity = (dealId) => {
     if (!newNote.trim()) return;
     setDeals(prev => prev.map(d => {
@@ -482,12 +491,29 @@ export default function App() {
             {/* Due This Month Filter */}
             {(() => {
               const dueThisMonth = deals.filter(d => d.stage === "Paid");
+
               const dueTotal = dueThisMonth.reduce((a, d) => {
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
-                const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
-                if (nextUnpaidIdx === -1) return a;
-                const row = comm.schedule[nextUnpaidIdx];
-                return a + row.setter + row.closer;
+                const setupIdx = comm.schedule.findIndex(r => r.month === 0);
+                const month1Idx = comm.schedule.findIndex(r => r.month === 1);
+                const setupUnpaid = setupIdx !== -1 && !d.commissionPaid?.[setupIdx];
+                const month1Unpaid = month1Idx !== -1 && !d.commissionPaid?.[month1Idx];
+                const toBePaid = [];
+                if (setupUnpaid) toBePaid.push(setupIdx);
+                if (month1Unpaid) toBePaid.push(month1Idx);
+                // If setup+month1 are both already paid, fall back to next unpaid
+                if (toBePaid.length === 0) {
+                  const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
+                  if (nextUnpaidIdx !== -1) {
+                    const row = comm.schedule[nextUnpaidIdx];
+                    return a + row.setter + row.closer;
+                  }
+                  return a;
+                }
+                return a + toBePaid.reduce((sum, i) => {
+                  const row = comm.schedule[i];
+                  return sum + row.setter + row.closer;
+                }, 0);
               }, 0);
 
               return dueThisMonth.length > 0 ? (
@@ -502,30 +528,80 @@ export default function App() {
                     {dueThisMonth.map(d => {
                       const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                       const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ");
-                      const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
-                      if (nextUnpaidIdx === -1) return (
-                        <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
-                          <div style={{ fontSize: 13, color: "#4ade80" }}>{d.clientName} — ✓ All commission paid</div>
-                        </div>
-                      );
-                      const row = comm.schedule[nextUnpaidIdx];
-                      const rowTotal = row.setter + row.closer;
+
+                      const setupIdx = comm.schedule.findIndex(r => r.month === 0);
+                      const month1Idx = comm.schedule.findIndex(r => r.month === 1);
+                      const setupUnpaid = setupIdx !== -1 && !d.commissionPaid?.[setupIdx];
+                      const month1Unpaid = month1Idx !== -1 && !d.commissionPaid?.[month1Idx];
+
+                      // Collect indices to pay together (setup + month 1)
+                      const toBePaid = [];
+                      if (setupUnpaid) toBePaid.push(setupIdx);
+                      if (month1Unpaid) toBePaid.push(month1Idx);
+
+                      // If both already paid, fall back to next unpaid
+                      if (toBePaid.length === 0) {
+                        const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
+                        if (nextUnpaidIdx === -1) return (
+                          <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
+                            <div style={{ fontSize: 13, color: "#4ade80" }}>{d.clientName} — ✓ All commission paid</div>
+                          </div>
+                        );
+                        const row = comm.schedule[nextUnpaidIdx];
+                        const rowTotal = row.setter + row.closer;
+                        const remainingAfter = comm.schedule.length - nextUnpaidIdx - 1;
+                        return (
+                          <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
+                            <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>
+                              {d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                              <button onClick={() => togglePaid(d.id, nextUnpaidIdx)}
+                                style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
+                                Pay {row.label}: £{rowTotal.toFixed(2)}
+                              </button>
+                              <span style={{ fontSize: 11, color: "#475569" }}>S: £{row.setter} · C: £{row.closer}</span>
+                              {remainingAfter > 0 && (
+                                <span style={{ fontSize: 10, color: "#334155" }}>
+                                  {remainingAfter} more payment{remainingAfter > 1 ? "s" : ""} to follow
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const combinedTotal = toBePaid.reduce((sum, i) => {
+                        const row = comm.schedule[i];
+                        return sum + row.setter + row.closer;
+                      }, 0);
+
+                      const paidLabels = toBePaid.map(i => comm.schedule[i].label).join(" + ");
+                      const setterTotal = toBePaid.reduce((sum, i) => sum + comm.schedule[i].setter, 0);
+                      const closerTotal = toBePaid.reduce((sum, i) => sum + comm.schedule[i].closer, 0);
+
+                      // Count remaining payments after these
+                      const paidSet = new Set(toBePaid);
+                      const remainingAfter = comm.schedule.filter((_, i) => !paidSet.has(i) && !d.commissionPaid?.[i]).length - 0;
+                      const remainingCount = comm.schedule.filter((_, i) => !paidSet.has(i)).length;
+
                       return (
                         <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
                           <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>
                             {d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span>
                           </div>
                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                            <button onClick={() => togglePaid(d.id, nextUnpaidIdx)}
+                            <button
+                              onClick={() => markMultiplePaid(d.id, toBePaid)}
                               style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                              Pay {row.label}: £{rowTotal.toFixed(2)}
+                              Pay {paidLabels}: £{combinedTotal.toFixed(2)}
                             </button>
                             <span style={{ fontSize: 11, color: "#475569" }}>
-                              S: £{row.setter} · C: £{row.closer}
+                              S: £{setterTotal.toFixed(2)} · C: £{closerTotal.toFixed(2)}
                             </span>
-                            {nextUnpaidIdx < comm.schedule.length - 1 && (
+                            {remainingCount > 0 && (
                               <span style={{ fontSize: 10, color: "#334155" }}>
-                                {comm.schedule.length - nextUnpaidIdx - 1} more payment{comm.schedule.length - nextUnpaidIdx - 1 > 1 ? "s" : ""} to follow
+                                {remainingCount} more payment{remainingCount > 1 ? "s" : ""} to follow
                               </span>
                             )}
                           </div>
