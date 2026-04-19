@@ -1,17 +1,42 @@
 import { useState, useEffect } from "react";
 
-const PLANS = {
-  plan1:  { label: "£200 Setup + £97/mo",   setup: 200, monthly: 97,  type: "saas" },
-  plan2:  { label: "£200 Setup + £197/mo",  setup: 200, monthly: 197, type: "saas" },
-  plan3:  { label: "£300 Setup + £197/mo",  setup: 300, monthly: 197, type: "saas" },
-  plan4:  { label: "£300 Setup + £297/mo",  setup: 300, monthly: 297, type: "saas" },
-  plan5:  { label: "£400 Setup + £297/mo",  setup: 400, monthly: 297, type: "saas" },
-  plan6:  { label: "£400 Setup + £397/mo",  setup: 400, monthly: 397, type: "saas" },
-  plan7:  { label: "£500 Setup + £397/mo",  setup: 500, monthly: 397, type: "saas" },
-  plan8:  { label: "£500 Setup + £497/mo",  setup: 500, monthly: 497, type: "saas" },
-  plan9:  { label: "£600 Setup + £497/mo",  setup: 600, monthly: 497, type: "saas" },
-  plan10: { label: "£595 One-Off",          setup: 595, monthly: 0,   type: "oneoff" },
-};
+const SUPABASE_URL = "https://expamnwtdxiuborautjf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_GLlEFuNV2vOGOim3JhSD8A__YI2O5Fy";
+
+async function dbLoad() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/deals?select=*`, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+    },
+  });
+  const rows = await res.json();
+  return rows.map(r => r.data);
+}
+
+async function dbSave(deals) {
+  const rows = deals.map(d => ({ id: d.id, data: d }));
+  await fetch(`${SUPABASE_URL}/rest/v1/deals`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates",
+    },
+    body: JSON.stringify(rows),
+  });
+}
+
+async function dbDelete(id) {
+  await fetch(`${SUPABASE_URL}/rest/v1/deals?id=eq.${id}`, {
+    method: "DELETE",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+    },
+  });
+}
 
 const STAGES = ["New Lead", "Call Booked", "Call Completed", "Closed Won", "Active Client", "Follow Up", "Cancelled", "Paid"];
 
@@ -30,34 +55,17 @@ function calcCommissionCustom(monthlyFee, setupFee, months = 3) {
   const monthly = parseFloat(monthlyFee) || 0;
   const setup = parseFloat(setupFee) || 0;
   const schedule = [];
-
   if (setup > 0) {
-    schedule.push({
-      month: 0,
-      label: "Setup / One-Off",
-      setter: +(setup * 0.1).toFixed(2),
-      closer: +(setup * 0.2).toFixed(2),
-    });
+    schedule.push({ month: 0, label: "Setup / One-Off", setter: +(setup * 0.1).toFixed(2), closer: +(setup * 0.2).toFixed(2) });
   }
-
   for (let m = 1; m <= months; m++) {
     if (monthly > 0) {
-      schedule.push({
-        month: m,
-        label: `Month ${m}`,
-        setter: +(monthly * 0.1).toFixed(2),
-        closer: +(monthly * 0.2).toFixed(2),
-      });
+      schedule.push({ month: m, label: `Month ${m}`, setter: +(monthly * 0.1).toFixed(2), closer: +(monthly * 0.2).toFixed(2) });
     }
   }
-
   const setter = +schedule.reduce((a, r) => a + r.setter, 0).toFixed(2);
   const closer = +schedule.reduce((a, r) => a + r.closer, 0).toFixed(2);
   return { setter, closer, total: +(setter + closer).toFixed(2), schedule };
-}
-
-function daysSince(dateStr) {
-  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
 }
 
 const emptyDeal = () => ({
@@ -75,18 +83,6 @@ const emptyDeal = () => ({
   createdAt: new Date().toISOString(),
 });
 
-const STORAGE_KEY = "ghl_crm_deals_v2";
-
-async function saveDeals(deals) {
-  try { await window.storage.set(STORAGE_KEY, JSON.stringify(deals)); } catch (e) {}
-}
-async function loadDeals() {
-  try {
-    const r = await window.storage.get(STORAGE_KEY);
-    return r ? JSON.parse(r.value) : [];
-  } catch { return []; }
-}
-
 export default function App() {
   const [deals, setDeals] = useState([]);
   const [view, setView] = useState("dashboard");
@@ -103,27 +99,27 @@ export default function App() {
   const UNLOCK_PASSWORD = "2169";
 
   useEffect(() => {
-    loadDeals().then(d => { setDeals(d); setLoaded(true); });
+    dbLoad().then(d => { setDeals(d); setLoaded(true); });
   }, []);
-
-  useEffect(() => {
-    if (loaded) saveDeals(deals);
-  }, [deals, loaded]);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
 
-  const saveDeal = () => {
+  const saveDeal = async () => {
     if (!form.clientName.trim()) { showToast("Client name required", "error"); return; }
+    let updatedDeals;
     if (editDeal) {
-      setDeals(prev => prev.map(d => d.id === editDeal ? { ...form } : d));
+      updatedDeals = deals.map(d => d.id === editDeal ? { ...form } : d);
       showToast("Deal updated");
     } else {
-      setDeals(prev => [{ ...form, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...prev]);
+      const newDeal = { ...form, id: Date.now().toString(), createdAt: new Date().toISOString() };
+      updatedDeals = [newDeal, ...deals];
       showToast("Deal added");
     }
+    setDeals(updatedDeals);
+    await dbSave(updatedDeals);
     setShowForm(false);
     setEditDeal(null);
     setForm(emptyDeal());
@@ -136,59 +132,61 @@ export default function App() {
     setSelectedDeal(null);
   };
 
-  const deleteDeal = (id) => {
-    setDeals(prev => prev.filter(d => d.id !== id));
+  const deleteDeal = async (id) => {
+    const updatedDeals = deals.filter(d => d.id !== id);
+    setDeals(updatedDeals);
+    await dbDelete(id);
     setSelectedDeal(null);
     showToast("Deal deleted");
   };
 
-  const togglePaid = (dealId, idx) => {
-    setDeals(prev => prev.map(d => {
+  const togglePaid = async (dealId, idx) => {
+    const updatedDeals = deals.map(d => {
       if (d.id !== dealId) return d;
       const cp = [...d.commissionPaid];
       cp[idx] = !cp[idx];
       return { ...d, commissionPaid: cp };
-    }));
+    });
+    setDeals(updatedDeals);
+    await dbSave(updatedDeals);
   };
 
-  const markMultiplePaid = (dealId, indices) => {
-    setDeals(prev => prev.map(d => {
+  const markMultiplePaid = async (dealId, indices) => {
+    const updatedDeals = deals.map(d => {
       if (d.id !== dealId) return d;
       const cp = [...d.commissionPaid];
       indices.forEach(i => { cp[i] = true; });
       return { ...d, commissionPaid: cp };
-    }));
+    });
+    setDeals(updatedDeals);
+    await dbSave(updatedDeals);
   };
 
-  const addActivity = (dealId) => {
+  const addActivity = async (dealId) => {
     if (!newNote.trim()) return;
-    setDeals(prev => prev.map(d => {
+    const updatedDeals = deals.map(d => {
       if (d.id !== dealId) return d;
       return { ...d, activityLog: [{ text: newNote, date: new Date().toISOString() }, ...(d.activityLog || [])] };
-    }));
+    });
+    setDeals(updatedDeals);
+    await dbSave(updatedDeals);
     setNewNote("");
   };
 
-  const updateStage = (dealId, stage) => {
+  const updateStage = async (dealId, stage) => {
     if (stage === "Paid") {
       setUnlockTarget({ dealId, stage: "Paid" });
       setUnlockPassword("");
       return;
     }
-    setDeals(prev => prev.map(d => {
-      if (d.id !== dealId) return d;
-      return { ...d, stage };
-    }));
+    const updatedDeals = deals.map(d => d.id === dealId ? { ...d, stage } : d);
+    setDeals(updatedDeals);
+    await dbSave(updatedDeals);
   };
 
-  // Stats
   const activeSaas = deals.filter(d => d.stage === "Active Client" && (parseFloat(d.monthlyFee) || 0) > 0);
   const closedDeals = deals.filter(d => d.stage === "Closed Won" || d.stage === "Active Client");
-  const totalRevenue = closedDeals.reduce((a, d) => {
-    const monthly = parseFloat(d.monthlyFee) || 0;
-    const setup = parseFloat(d.setupFee) || 0;
-    return a + setup + monthly * 3;
-  }, 0);
+  const totalRevenue = closedDeals.reduce((a, d) => a + (parseFloat(d.setupFee) || 0) + (parseFloat(d.monthlyFee) || 0) * 3, 0);
   const totalCommOwed = deals.reduce((a, d) => {
     const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     const paid = d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0;
@@ -198,11 +196,8 @@ export default function App() {
     const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     return a + (d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0);
   }, 0);
-  const clawbacks = 0;
   const mrr = activeSaas.reduce((a, d) => a + (parseFloat(d.monthlyFee) || 0), 0);
-
   const filtered = filterStage === "All" ? deals : deals.filter(d => d.stage === filterStage);
-
   const detailDeal = selectedDeal ? deals.find(d => d.id === selectedDeal) : null;
   const detailComm = detailDeal ? calcCommissionCustom(detailDeal.monthlyFee, detailDeal.setupFee) : null;
 
@@ -233,7 +228,6 @@ export default function App() {
         .comm-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0f172a; border-radius: 6px; border: 1px solid #1e293b; }
         .paid-btn { background: none; border: 1px solid #16a34a; color: #4ade80; border-radius: 4px; padding: 3px 10px; font-size: 11px; }
         .unpaid-btn { background: none; border: 1px solid #334155; color: #64748b; border-radius: 4px; padding: 3px 10px; font-size: 11px; }
-        .clawback-banner { background: #3b0f0f; border: 1px solid #dc2626; border-radius: 8px; padding: 12px 16px; color: #f87171; font-size: 12px; margin-bottom: 12px; }
         .activity-item { padding: 10px 12px; background: #0f172a; border-left: 2px solid #f59e0b; border-radius: 0 6px 6px 0; margin-bottom: 8px; }
         .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; }
         .modal { background: #0d1420; border: 1px solid #1e293b; border-radius: 14px; padding: 28px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; }
@@ -258,6 +252,9 @@ export default function App() {
         <button className="btn-primary" onClick={() => { setForm(emptyDeal()); setEditDeal(null); setShowForm(true); }}>+ New Deal</button>
       </div>
 
+      {!loaded ? (
+        <div style={{ textAlign: "center", padding: 60, color: "#475569", fontSize: 13 }}>Loading deals from database...</div>
+      ) : (
       <div style={{ padding: "24px", maxWidth: 1200, margin: "0 auto" }}>
 
         {/* DASHBOARD */}
@@ -276,13 +273,12 @@ export default function App() {
               ].map(s => (
                 <div key={s.label} className="stat-card">
                   <div className="section-label">{s.label}</div>
-                  <div style={{ fontSize: 26, fontFamily: "'Syne', sans-serif", fontWeight: 800, color: s.danger ? "#f87171" : s.accent ? "#f59e0b" : "#f1f5f9", lineHeight: 1.1 }}>{s.value}</div>
+                  <div style={{ fontSize: 26, fontFamily: "'Syne', sans-serif", fontWeight: 800, color: s.accent ? "#f59e0b" : "#f1f5f9", lineHeight: 1.1 }}>{s.value}</div>
                   <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{s.sub}</div>
                 </div>
               ))}
             </div>
 
-            {/* Pipeline */}
             <div className="section-label">Pipeline Breakdown</div>
             <div style={{ display: "flex", gap: 10, marginBottom: 28, flexWrap: "wrap" }}>
               {STAGES.map(s => {
@@ -297,7 +293,6 @@ export default function App() {
               })}
             </div>
 
-            {/* Recent */}
             <div className="section-label">Recent Deals</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {deals.slice(0, 5).map(d => {
@@ -315,7 +310,6 @@ export default function App() {
                       <div style={{ fontSize: 13, color: "#f59e0b" }}>£{comm.total}</div>
                       <div style={{ fontSize: 10, color: "#475569" }}>commission</div>
                     </div>
-                    {d.clawback && <span style={{ fontSize: 10, color: "#f87171" }}>⚠</span>}
                   </div>
                 );
               })}
@@ -356,7 +350,6 @@ export default function App() {
                       <div style={{ textAlign: "right", minWidth: 70 }}>
                         <div style={{ fontSize: 13, color: "#f59e0b" }}>£{comm.total}</div>
                       </div>
-                      {d.clawback && <span style={{ fontSize: 10, color: "#f87171" }}>⚠</span>}
                     </div>
                   );
                 })}
@@ -364,7 +357,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* DEAL DETAIL PANEL */}
             {detailDeal && detailComm && (
               <div style={{ position: "sticky", top: 20, height: "fit-content", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
                 <div className="card" style={{ border: "1px solid #334155" }}>
@@ -376,7 +368,6 @@ export default function App() {
                     <button onClick={() => setSelectedDeal(null)} style={{ background: "none", border: "none", color: "#475569", fontSize: 18 }}>✕</button>
                   </div>
 
-                  {/* Stage Selector */}
                   <div className="section-label">Stage</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                     {STAGES.map(s => {
@@ -390,23 +381,15 @@ export default function App() {
                     })}
                   </div>
 
-                  {/* Fees & dates */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
-                    <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Monthly Fee</div>
-                      <div style={{ fontSize: 12, color: "#f59e0b" }}>{detailDeal.monthlyFee ? `£${detailDeal.monthlyFee}` : "—"}</div>
-                    </div>
-                    <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Setup / One-Off</div>
-                      <div style={{ fontSize: 12, color: "#f59e0b" }}>{detailDeal.setupFee ? `£${detailDeal.setupFee}` : "—"}</div>
-                    </div>
-                    <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
-                      <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Sale Date</div>
-                      <div style={{ fontSize: 12 }}>{detailDeal.saleDate}</div>
-                    </div>
+                    {[["Monthly Fee", detailDeal.monthlyFee ? `£${detailDeal.monthlyFee}` : "—"], ["Setup / One-Off", detailDeal.setupFee ? `£${detailDeal.setupFee}` : "—"], ["Sale Date", detailDeal.saleDate]].map(([label, val]) => (
+                      <div key={label} style={{ background: "#0f172a", borderRadius: 6, padding: "10px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 12, color: "#f59e0b" }}>{val}</div>
+                      </div>
+                    ))}
                   </div>
 
-                  {/* Commission Schedule */}
                   <div className="section-label">Commission Schedule</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
                     {detailComm.schedule.map((row, i) => {
@@ -423,14 +406,10 @@ export default function App() {
                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                               <span className="paid-btn">✓ Paid</span>
                               <button onClick={() => { setUnlockTarget({ dealId: detailDeal.id, idx: i }); setUnlockPassword(""); }}
-                                style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer" }}>
-                                🔓
-                              </button>
+                                style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer" }}>🔓</button>
                             </div>
                           ) : (
-                            <button className="unpaid-btn" onClick={() => togglePaid(detailDeal.id, i)}>
-                              Unpaid
-                            </button>
+                            <button className="unpaid-btn" onClick={() => togglePaid(detailDeal.id, i)}>Unpaid</button>
                           )}
                         </div>
                       );
@@ -441,7 +420,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Activity Log */}
                   <div className="section-label">Activity Log</div>
                   <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                     <input value={newNote} onChange={e => setNewNote(e.target.value)}
@@ -461,7 +439,6 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Actions */}
                   <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
                     <button className="btn-ghost" style={{ flex: 1 }} onClick={() => openEdit(detailDeal)}>✎ Edit</button>
                     <button className="btn-danger" onClick={() => deleteDeal(detailDeal.id)}>Delete</button>
@@ -483,65 +460,32 @@ export default function App() {
               ].map(s => (
                 <div key={s.label} className="stat-card">
                   <div className="section-label">{s.label}</div>
-                  <div style={{ fontSize: 28, fontFamily: "'Syne', sans-serif", fontWeight: 800, color: s.danger ? "#f87171" : s.accent ? "#f59e0b" : "#f1f5f9" }}>{s.value}</div>
+                  <div style={{ fontSize: 28, fontFamily: "'Syne', sans-serif", fontWeight: 800, color: s.accent ? "#f59e0b" : "#f1f5f9" }}>{s.value}</div>
                 </div>
               ))}
             </div>
 
-            {/* Due This Month Filter */}
             {(() => {
               const dueThisMonth = deals.filter(d => d.stage === "Paid");
-
-              const dueTotal = dueThisMonth.reduce((a, d) => {
-                const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
-                const setupIdx = comm.schedule.findIndex(r => r.month === 0);
-                const month1Idx = comm.schedule.findIndex(r => r.month === 1);
-                const setupUnpaid = setupIdx !== -1 && !d.commissionPaid?.[setupIdx];
-                const month1Unpaid = month1Idx !== -1 && !d.commissionPaid?.[month1Idx];
-                const toBePaid = [];
-                if (setupUnpaid) toBePaid.push(setupIdx);
-                if (month1Unpaid) toBePaid.push(month1Idx);
-                // If setup+month1 are both already paid, fall back to next unpaid
-                if (toBePaid.length === 0) {
-                  const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
-                  if (nextUnpaidIdx !== -1) {
-                    const row = comm.schedule[nextUnpaidIdx];
-                    return a + row.setter + row.closer;
-                  }
-                  return a;
-                }
-                return a + toBePaid.reduce((sum, i) => {
-                  const row = comm.schedule[i];
-                  return sum + row.setter + row.closer;
-                }, 0);
-              }, 0);
-
               return dueThisMonth.length > 0 ? (
                 <div style={{ background: "#1a1200", border: "1px solid #f59e0b", borderRadius: 10, padding: 16, marginBottom: 20 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "#f59e0b" }}>
-                      🗓 Due This Month — Client Has Paid
-                    </div>
-                    <div style={{ fontSize: 13, color: "#f59e0b" }}>Total: £{dueTotal.toFixed(2)}</div>
+                  <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "#f59e0b", marginBottom: 12 }}>
+                    🗓 Due This Month — Client Has Paid
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {dueThisMonth.map(d => {
                       const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                       const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ");
-
                       const setupIdx = comm.schedule.findIndex(r => r.month === 0);
                       const month1Idx = comm.schedule.findIndex(r => r.month === 1);
                       const setupUnpaid = setupIdx !== -1 && !d.commissionPaid?.[setupIdx];
                       const month1Unpaid = month1Idx !== -1 && !d.commissionPaid?.[month1Idx];
-
-                      // Collect indices to pay together (setup + month 1)
                       const toBePaid = [];
                       if (setupUnpaid) toBePaid.push(setupIdx);
                       if (month1Unpaid) toBePaid.push(month1Idx);
 
-                      // If both already paid, fall back to next unpaid
                       if (toBePaid.length === 0) {
-                        const nextUnpaidIdx = comm.schedule.findIndex((row, i) => !d.commissionPaid?.[i]);
+                        const nextUnpaidIdx = comm.schedule.findIndex((_, i) => !d.commissionPaid?.[i]);
                         if (nextUnpaidIdx === -1) return (
                           <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
                             <div style={{ fontSize: 13, color: "#4ade80" }}>{d.clientName} — ✓ All commission paid</div>
@@ -549,7 +493,6 @@ export default function App() {
                         );
                         const row = comm.schedule[nextUnpaidIdx];
                         const rowTotal = row.setter + row.closer;
-                        const remainingAfter = comm.schedule.length - nextUnpaidIdx - 1;
                         return (
                           <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
                             <div style={{ fontSize: 13, color: "#f1f5f9", fontWeight: 500, marginBottom: 6 }}>
@@ -561,29 +504,16 @@ export default function App() {
                                 Pay {row.label}: £{rowTotal.toFixed(2)}
                               </button>
                               <span style={{ fontSize: 11, color: "#475569" }}>S: £{row.setter} · C: £{row.closer}</span>
-                              {remainingAfter > 0 && (
-                                <span style={{ fontSize: 10, color: "#334155" }}>
-                                  {remainingAfter} more payment{remainingAfter > 1 ? "s" : ""} to follow
-                                </span>
-                              )}
                             </div>
                           </div>
                         );
                       }
 
-                      const combinedTotal = toBePaid.reduce((sum, i) => {
-                        const row = comm.schedule[i];
-                        return sum + row.setter + row.closer;
-                      }, 0);
-
+                      const combinedTotal = toBePaid.reduce((sum, i) => sum + comm.schedule[i].setter + comm.schedule[i].closer, 0);
                       const paidLabels = toBePaid.map(i => comm.schedule[i].label).join(" + ");
                       const setterTotal = toBePaid.reduce((sum, i) => sum + comm.schedule[i].setter, 0);
                       const closerTotal = toBePaid.reduce((sum, i) => sum + comm.schedule[i].closer, 0);
-
-                      // Count remaining payments after these
-                      const paidSet = new Set(toBePaid);
-                      const remainingAfter = comm.schedule.filter((_, i) => !paidSet.has(i) && !d.commissionPaid?.[i]).length - 0;
-                      const remainingCount = comm.schedule.filter((_, i) => !paidSet.has(i)).length;
+                      const remainingCount = comm.schedule.filter((_, i) => !new Set(toBePaid).has(i)).length;
 
                       return (
                         <div key={d.id} style={{ background: "#0d1420", borderRadius: 6, padding: "10px 14px" }}>
@@ -591,19 +521,12 @@ export default function App() {
                             {d.clientName} <span style={{ fontSize: 11, color: "#475569" }}>{feeLabel}</span>
                           </div>
                           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                            <button
-                              onClick={() => markMultiplePaid(d.id, toBePaid)}
+                            <button onClick={() => markMultiplePaid(d.id, toBePaid)}
                               style={{ background: "#f59e0b", color: "#000", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
                               Pay {paidLabels}: £{combinedTotal.toFixed(2)}
                             </button>
-                            <span style={{ fontSize: 11, color: "#475569" }}>
-                              S: £{setterTotal.toFixed(2)} · C: £{closerTotal.toFixed(2)}
-                            </span>
-                            {remainingCount > 0 && (
-                              <span style={{ fontSize: 10, color: "#334155" }}>
-                                {remainingCount} more payment{remainingCount > 1 ? "s" : ""} to follow
-                              </span>
-                            )}
+                            <span style={{ fontSize: 11, color: "#475569" }}>S: £{setterTotal.toFixed(2)} · C: £{closerTotal.toFixed(2)}</span>
+                            {remainingCount > 0 && <span style={{ fontSize: 10, color: "#334155" }}>{remainingCount} more payment{remainingCount > 1 ? "s" : ""} to follow</span>}
                           </div>
                         </div>
                       );
@@ -617,7 +540,6 @@ export default function App() {
               );
             })()}
 
-            {/* All Deals */}
             <div className="section-label">All Commission Records</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {deals.map(d => {
@@ -626,14 +548,14 @@ export default function App() {
                 const owed = comm.total - paidTotal;
                 const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ") || "No fees set";
                 return (
-                  <div key={d.id} className="card" style={{ border: "1px solid #1e293b" }}>
+                  <div key={d.id} className="card">
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div>
                         <span style={{ fontWeight: 500, color: "#f1f5f9" }}>{d.clientName}</span>
                         <span style={{ marginLeft: 10, fontSize: 11, color: "#475569" }}>{feeLabel}</span>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 13, color: d.clawback ? "#475569" : "#f59e0b" }}>£{owed.toFixed(2)} owed</div>
+                        <div style={{ fontSize: 13, color: "#f59e0b" }}>£{owed.toFixed(2)} owed</div>
                         <div style={{ fontSize: 11, color: "#334155" }}>£{paidTotal.toFixed(2)} paid</div>
                       </div>
                     </div>
@@ -647,9 +569,7 @@ export default function App() {
                               {row.label}: £{rowTotal.toFixed(2)} ✓ Paid
                             </div>
                             <button onClick={() => { setUnlockTarget({ dealId: d.id, idx: i }); setUnlockPassword(""); }}
-                              style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "4px 8px", fontSize: 10, cursor: "pointer" }}>
-                              🔓
-                            </button>
+                              style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "4px 8px", fontSize: 10, cursor: "pointer" }}>🔓</button>
                           </div>
                         ) : (
                           <button key={i} onClick={() => togglePaid(d.id, i)}
@@ -667,6 +587,7 @@ export default function App() {
           </div>
         )}
       </div>
+      )}
 
       {/* ADD/EDIT MODAL */}
       {showForm && (
@@ -676,74 +597,40 @@ export default function App() {
               {editDeal ? "Edit Deal" : "New Deal"}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <div className="section-label">Client Name *</div>
-                <input value={form.clientName} onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))} placeholder="e.g. John Smith" />
+              <div><div className="section-label">Client Name *</div><input value={form.clientName} onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))} placeholder="e.g. John Smith" /></div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div><div className="section-label">Email</div><input value={form.clientEmail} onChange={e => setForm(f => ({ ...f, clientEmail: e.target.value }))} placeholder="john@email.com" /></div>
+                <div><div className="section-label">Phone</div><input value={form.clientPhone} onChange={e => setForm(f => ({ ...f, clientPhone: e.target.value }))} placeholder="+44..." /></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="section-label">Email</div>
-                  <input value={form.clientEmail} onChange={e => setForm(f => ({ ...f, clientEmail: e.target.value }))} placeholder="john@email.com" />
-                </div>
-                <div>
-                  <div className="section-label">Phone</div>
-                  <input value={form.clientPhone} onChange={e => setForm(f => ({ ...f, clientPhone: e.target.value }))} placeholder="+44..." />
-                </div>
+                <div><div className="section-label">Monthly Fee (£)</div><input type="number" min="0" value={form.monthlyFee} onChange={e => setForm(f => ({ ...f, monthlyFee: e.target.value }))} placeholder="e.g. 197" /></div>
+                <div><div className="section-label">One-Off / Setup Fee (£)</div><input type="number" min="0" value={form.setupFee} onChange={e => setForm(f => ({ ...f, setupFee: e.target.value }))} placeholder="e.g. 297" /></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="section-label">Monthly Fee (£)</div>
-                  <input type="number" min="0" value={form.monthlyFee} onChange={e => setForm(f => ({ ...f, monthlyFee: e.target.value }))} placeholder="e.g. 197" />
-                </div>
-                <div>
-                  <div className="section-label">One-Off / Setup Fee (£)</div>
-                  <input type="number" min="0" value={form.setupFee} onChange={e => setForm(f => ({ ...f, setupFee: e.target.value }))} placeholder="e.g. 297" />
-                </div>
+                <div><div className="section-label">Stage</div><select value={form.stage} onChange={e => setForm(f => ({ ...f, stage: e.target.value }))}>{STAGES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                <div><div className="section-label">Sale Date</div><input type="date" value={form.saleDate} onChange={e => setForm(f => ({ ...f, saleDate: e.target.value }))} /></div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="section-label">Stage</div>
-                  <select value={form.stage} onChange={e => setForm(f => ({ ...f, stage: e.target.value }))}>
-                    {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div className="section-label">Sale Date</div>
-                  <input type="date" value={form.saleDate} onChange={e => setForm(f => ({ ...f, saleDate: e.target.value }))} />
-                </div>
-              </div>
-              <div>
-                <div className="section-label">Notes</div>
-                <textarea rows={3} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes about this deal..." />
-              </div>
-
-              {/* Commission Preview */}
+              <div><div className="section-label">Notes</div><textarea rows={3} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes about this deal..." /></div>
               <div style={{ background: "#0f172a", borderRadius: 8, padding: 14, border: "1px solid #1e293b" }}>
-                <div className="section-label">Commission Preview (Setter 10% · Closer 20% · 3 months)</div>
+                <div className="section-label">Commission Preview</div>
                 {(() => {
                   const c = calcCommissionCustom(form.monthlyFee, form.setupFee);
                   return (
                     <div>
                       <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
-                        <div><div style={{ fontSize: 10, color: "#475569" }}>Setter earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.setter}</div></div>
-                        <div><div style={{ fontSize: 10, color: "#475569" }}>Closer earns</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.closer}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#475569" }}>Setter</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.setter}</div></div>
+                        <div><div style={{ fontSize: 10, color: "#475569" }}>Closer</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.closer}</div></div>
                         <div><div style={{ fontSize: 10, color: "#475569" }}>Total</div><div style={{ color: "#f59e0b", fontSize: 16, fontWeight: 500 }}>£{c.total}</div></div>
                       </div>
-                      {c.schedule.length > 0 && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          {c.schedule.map((row, i) => (
-                            <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#64748b" }}>
-                              <span>{row.label}</span>
-                              <span>S: £{row.setter} · C: £{row.closer} · Total: £{(row.setter + row.closer).toFixed(2)}</span>
-                            </div>
-                          ))}
+                      {c.schedule.map((row, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#64748b" }}>
+                          <span>{row.label}</span><span>S: £{row.setter} · C: £{row.closer}</span>
                         </div>
-                      )}
+                      ))}
                     </div>
                   );
                 })()}
               </div>
-
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button className="btn-ghost" onClick={() => { setShowForm(false); setEditDeal(null); }}>Cancel</button>
                 <button className="btn-primary" onClick={saveDeal}>{editDeal ? "Save Changes" : "Add Deal"}</button>
@@ -760,60 +647,40 @@ export default function App() {
             <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>
               {unlockTarget.stage === "Paid" ? "🔒 Mark as Paid" : "🔓 Unlock Payment"}
             </div>
-            <div style={{ fontSize: 12, color: "#475569", marginBottom: 20 }}>
-              {unlockTarget.stage === "Paid"
-                ? "Enter your password to mark this deal as Paid. This confirms the client has paid and commission is due."
-                : "Enter your password to reverse this payment."}
-            </div>
-            <input
-              type="password"
-              value={unlockPassword}
-              onChange={e => setUnlockPassword(e.target.value)}
-              onKeyDown={e => {
+            <div style={{ fontSize: 12, color: "#475569", marginBottom: 20 }}>Enter your password to confirm.</div>
+            <input type="password" value={unlockPassword} onChange={e => setUnlockPassword(e.target.value)}
+              onKeyDown={async e => {
                 if (e.key === "Enter") {
                   if (unlockPassword === UNLOCK_PASSWORD) {
                     if (unlockTarget.stage === "Paid") {
-                      setDeals(prev => prev.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d));
-                      showToast("Deal marked as Paid ✓");
+                      const updated = deals.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d);
+                      setDeals(updated); await dbSave(updated); showToast("Deal marked as Paid ✓");
                     } else {
-                      togglePaid(unlockTarget.dealId, unlockTarget.idx);
-                      showToast("Payment reversed");
+                      await togglePaid(unlockTarget.dealId, unlockTarget.idx); showToast("Payment reversed");
                     }
-                    setUnlockTarget(null);
-                    setUnlockPassword("");
-                  } else {
-                    showToast("Incorrect password", "error");
-                    setUnlockPassword("");
-                  }
+                    setUnlockTarget(null); setUnlockPassword("");
+                  } else { showToast("Incorrect password", "error"); setUnlockPassword(""); }
                 }
               }}
-              placeholder="Enter password..."
-              autoFocus
-            />
+              placeholder="Enter password..." autoFocus />
             <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
               <button className="btn-ghost" onClick={() => setUnlockTarget(null)}>Cancel</button>
-              <button className="btn-primary" onClick={() => {
+              <button className="btn-primary" onClick={async () => {
                 if (unlockPassword === UNLOCK_PASSWORD) {
                   if (unlockTarget.stage === "Paid") {
-                    setDeals(prev => prev.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d));
-                    showToast("Deal marked as Paid ✓");
+                    const updated = deals.map(d => d.id === unlockTarget.dealId ? { ...d, stage: "Paid", paidDate: new Date().toISOString() } : d);
+                    setDeals(updated); await dbSave(updated); showToast("Deal marked as Paid ✓");
                   } else {
-                    togglePaid(unlockTarget.dealId, unlockTarget.idx);
-                    showToast("Payment reversed");
+                    await togglePaid(unlockTarget.dealId, unlockTarget.idx); showToast("Payment reversed");
                   }
-                  setUnlockTarget(null);
-                  setUnlockPassword("");
-                } else {
-                  showToast("Incorrect password", "error");
-                  setUnlockPassword("");
-                }
+                  setUnlockTarget(null); setUnlockPassword("");
+                } else { showToast("Incorrect password", "error"); setUnlockPassword(""); }
               }}>Confirm</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TOAST */}
       {toast && (
         <div className="toast" style={{ background: toast.type === "error" ? "#7f1d1d" : "#14532d", color: toast.type === "error" ? "#fca5a5" : "#4ade80", border: `1px solid ${toast.type === "error" ? "#dc2626" : "#16a34a"}` }}>
           {toast.msg}
