@@ -71,7 +71,6 @@ const emptyDeal = () => ({
   notes: "",
   activityLog: [],
   commissionPaid: [false, false, false, false, false],
-  clawback: false,
   createdAt: new Date().toISOString(),
 });
 
@@ -181,7 +180,6 @@ export default function App() {
     return a + setup + monthly * 3;
   }, 0);
   const totalCommOwed = deals.reduce((a, d) => {
-    if (d.clawback) return a;
     const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     const paid = d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0;
     return a + c.total - paid;
@@ -190,7 +188,7 @@ export default function App() {
     const c = calcCommissionCustom(d.monthlyFee, d.setupFee);
     return a + (d.commissionPaid?.reduce((s, v, i) => s + (v ? (c.schedule[i]?.setter || 0) + (c.schedule[i]?.closer || 0) : 0), 0) || 0);
   }, 0);
-  const clawbacks = deals.filter(d => d.clawback).length;
+  const clawbacks = 0;
   const mrr = activeSaas.reduce((a, d) => a + (parseFloat(d.monthlyFee) || 0), 0);
 
   const filtered = filterStage === "All" ? deals : deals.filter(d => d.stage === filterStage);
@@ -265,7 +263,6 @@ export default function App() {
                 { label: "Revenue (3mo)", value: `£${totalRevenue.toFixed(0)}`, sub: "projected" },
                 { label: "Comm. Owed", value: `£${totalCommOwed.toFixed(2)}`, sub: "unpaid", accent: totalCommOwed > 0 },
                 { label: "Comm. Paid", value: `£${totalCommPaid.toFixed(2)}`, sub: "settled" },
-                { label: "Clawbacks", value: clawbacks, sub: "flagged", danger: clawbacks > 0 },
               ].map(s => (
                 <div key={s.label} className="stat-card">
                   <div className="section-label">{s.label}</div>
@@ -308,7 +305,7 @@ export default function App() {
                       <div style={{ fontSize: 13, color: "#f59e0b" }}>£{comm.total}</div>
                       <div style={{ fontSize: 10, color: "#475569" }}>commission</div>
                     </div>
-                    {d.clawback && <span style={{ fontSize: 10, color: "#f87171", background: "#3b0f0f", padding: "2px 8px", borderRadius: 4 }}>⚠ CLAWBACK</span>}
+                    {d.clawback && <span style={{ fontSize: 10, color: "#f87171" }}>⚠</span>}
                   </div>
                 );
               })}
@@ -369,10 +366,6 @@ export default function App() {
                     <button onClick={() => setSelectedDeal(null)} style={{ background: "none", border: "none", color: "#475569", fontSize: 18 }}>✕</button>
                   </div>
 
-                  {detailDeal.clawback && (
-                    <div className="clawback-banner">⚠ CLAWBACK ACTIVE — cancelled within 90 days. Commission should be recovered.</div>
-                  )}
-
                   {/* Stage Selector */}
                   <div className="section-label">Stage</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
@@ -410,7 +403,7 @@ export default function App() {
                       const isPaid = detailDeal.commissionPaid?.[i];
                       const rowTotal = row.setter + row.closer;
                       return (
-                        <div key={i} className="comm-row" style={{ opacity: detailDeal.clawback ? 0.4 : 1 }}>
+                        <div key={i} className="comm-row">
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: 12, color: "#94a3b8" }}>{row.label}</div>
                             <div style={{ fontSize: 10, color: "#475569" }}>S: £{row.setter} · C: £{row.closer}</div>
@@ -425,7 +418,7 @@ export default function App() {
                               </button>
                             </div>
                           ) : (
-                            <button className="unpaid-btn" onClick={() => !detailDeal.clawback && togglePaid(detailDeal.id, i)}>
+                            <button className="unpaid-btn" onClick={() => togglePaid(detailDeal.id, i)}>
                               Unpaid
                             </button>
                           )}
@@ -437,12 +430,6 @@ export default function App() {
                       <span style={{ fontSize: 14, color: "#f59e0b", fontWeight: 500 }}>£{detailComm.total}</span>
                     </div>
                   </div>
-
-                  {/* Clawback Toggle */}
-                  <button onClick={() => markClawback(detailDeal.id)}
-                    style={{ width: "100%", background: detailDeal.clawback ? "#7f1d1d" : "#0f172a", border: `1px solid ${detailDeal.clawback ? "#dc2626" : "#1e293b"}`, color: detailDeal.clawback ? "#f87171" : "#64748b", borderRadius: 6, padding: "8px", fontSize: 12, marginBottom: 16, cursor: "pointer" }}>
-                    {detailDeal.clawback ? "⚠ Remove Clawback Flag" : "Flag as Clawback"}
-                  </button>
 
                   {/* Activity Log */}
                   <div className="section-label">Activity Log</div>
@@ -483,7 +470,6 @@ export default function App() {
               {[
                 { label: "Total Owed", value: `£${totalCommOwed.toFixed(2)}`, accent: true },
                 { label: "Total Paid Out", value: `£${totalCommPaid.toFixed(2)}` },
-                { label: "Clawbacks", value: clawbacks, danger: clawbacks > 0 },
               ].map(s => (
                 <div key={s.label} className="stat-card">
                   <div className="section-label">{s.label}</div>
@@ -499,7 +485,6 @@ export default function App() {
               const thisYear = now.getFullYear();
 
               const dueThisMonth = deals.filter(d => {
-                if (d.clawback) return false;
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                 return comm.schedule.some((row, i) => {
                   if (d.commissionPaid?.[i]) return false;
@@ -573,15 +558,14 @@ export default function App() {
               {deals.map(d => {
                 const comm = calcCommissionCustom(d.monthlyFee, d.setupFee);
                 const paidTotal = d.commissionPaid?.reduce((s, v, i) => s + (v ? (comm.schedule[i]?.setter || 0) + (comm.schedule[i]?.closer || 0) : 0), 0) || 0;
-                const owed = d.clawback ? 0 : comm.total - paidTotal;
+                const owed = comm.total - paidTotal;
                 const feeLabel = [d.setupFee ? `£${d.setupFee} setup` : "", d.monthlyFee ? `£${d.monthlyFee}/mo` : ""].filter(Boolean).join(" + ") || "No fees set";
                 return (
-                  <div key={d.id} className="card" style={{ border: d.clawback ? "1px solid #7f1d1d" : "1px solid #1e293b" }}>
+                  <div key={d.id} className="card" style={{ border: "1px solid #1e293b" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                       <div>
                         <span style={{ fontWeight: 500, color: "#f1f5f9" }}>{d.clientName}</span>
                         <span style={{ marginLeft: 10, fontSize: 11, color: "#475569" }}>{feeLabel}</span>
-                        {d.clawback && <span style={{ marginLeft: 8, fontSize: 10, color: "#f87171", background: "#3b0f0f", padding: "2px 8px", borderRadius: 4 }}>⚠ CLAWBACK</span>}
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <div style={{ fontSize: 13, color: d.clawback ? "#475569" : "#f59e0b" }}>£{owed.toFixed(2)} owed</div>
@@ -594,7 +578,7 @@ export default function App() {
                         const rowTotal = row.setter + row.closer;
                         return isPaid ? (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <div style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11, opacity: d.clawback ? 0.4 : 1 }}>
+                            <div style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11 }}>
                               {row.label}: £{rowTotal.toFixed(2)} ✓ Paid
                             </div>
                             <button onClick={() => { setUnlockTarget({ dealId: d.id, idx: i }); setUnlockPassword(""); }}
@@ -603,8 +587,8 @@ export default function App() {
                             </button>
                           </div>
                         ) : (
-                          <button key={i} onClick={() => !d.clawback && togglePaid(d.id, i)}
-                            style={{ background: "#0f172a", border: "1px solid #1e293b", color: "#64748b", borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: d.clawback ? "not-allowed" : "pointer", opacity: d.clawback ? 0.4 : 1 }}>
+                          <button key={i} onClick={() => togglePaid(d.id, i)}
+                            style={{ background: "#0f172a", border: "1px solid #1e293b", color: "#64748b", borderRadius: 6, padding: "6px 12px", fontSize: 11, cursor: "pointer" }}>
                             {row.label}: £{rowTotal.toFixed(2)} ○ Unpaid
                           </button>
                         );
