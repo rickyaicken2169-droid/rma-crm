@@ -98,6 +98,9 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [filterStage, setFilterStage] = useState("All");
   const [toast, setToast] = useState(null);
+  const [unlockTarget, setUnlockTarget] = useState(null);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const UNLOCK_PASSWORD = "2169";
 
   useEffect(() => {
     loadDeals().then(d => { setDeals(d); setLoaded(true); });
@@ -413,9 +416,19 @@ export default function App() {
                             <div style={{ fontSize: 10, color: "#475569" }}>S: £{row.setter} · C: £{row.closer}</div>
                           </div>
                           <div style={{ fontSize: 13, color: "#f59e0b", minWidth: 50, textAlign: "right" }}>£{rowTotal.toFixed(2)}</div>
-                          <button className={isPaid ? "paid-btn" : "unpaid-btn"} onClick={() => togglePaid(detailDeal.id, i)}>
-                            {isPaid ? "✓ Paid" : "Unpaid"}
-                          </button>
+                          {isPaid ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                              <span className="paid-btn">✓ Paid</span>
+                              <button onClick={() => { setUnlockTarget({ dealId: detailDeal.id, idx: i }); setUnlockPassword(""); }}
+                                style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer" }}>
+                                🔓
+                              </button>
+                            </div>
+                          ) : (
+                            <button className="unpaid-btn" onClick={() => !detailDeal.clawback && togglePaid(detailDeal.id, i)}>
+                              Unpaid
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -580,9 +593,14 @@ export default function App() {
                         const isPaid = d.commissionPaid?.[i];
                         const rowTotal = row.setter + row.closer;
                         return isPaid ? (
-                          <div key={i}
-                            style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11, opacity: d.clawback ? 0.4 : 1 }}>
-                            {row.label}: £{rowTotal.toFixed(2)} ✓ Paid
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <div style={{ background: "#14532d", border: "1px solid #16a34a", color: "#4ade80", borderRadius: 6, padding: "6px 12px", fontSize: 11, opacity: d.clawback ? 0.4 : 1 }}>
+                              {row.label}: £{rowTotal.toFixed(2)} ✓ Paid
+                            </div>
+                            <button onClick={() => { setUnlockTarget({ dealId: d.id, idx: i }); setUnlockPassword(""); }}
+                              style={{ background: "none", border: "1px solid #334155", color: "#475569", borderRadius: 4, padding: "4px 8px", fontSize: 10, cursor: "pointer" }}>
+                              🔓
+                            </button>
                           </div>
                         ) : (
                           <button key={i} onClick={() => !d.clawback && togglePaid(d.id, i)}
@@ -681,6 +699,50 @@ export default function App() {
                 <button className="btn-ghost" onClick={() => { setShowForm(false); setEditDeal(null); }}>Cancel</button>
                 <button className="btn-primary" onClick={saveDeal}>{editDeal ? "Save Changes" : "Add Deal"}</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PASSWORD UNLOCK MODAL */}
+      {unlockTarget && (
+        <div className="modal-backdrop" onClick={() => setUnlockTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 360 }}>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, marginBottom: 8 }}>🔓 Unlock Payment</div>
+            <div style={{ fontSize: 12, color: "#475569", marginBottom: 20 }}>Enter your password to reverse this payment.</div>
+            <input
+              type="password"
+              value={unlockPassword}
+              onChange={e => setUnlockPassword(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  if (unlockPassword === UNLOCK_PASSWORD) {
+                    togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                    setUnlockTarget(null);
+                    setUnlockPassword("");
+                    showToast("Payment reversed");
+                  } else {
+                    showToast("Incorrect password", "error");
+                    setUnlockPassword("");
+                  }
+                }
+              }}
+              placeholder="Enter password..."
+              autoFocus
+            />
+            <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
+              <button className="btn-ghost" onClick={() => setUnlockTarget(null)}>Cancel</button>
+              <button className="btn-primary" onClick={() => {
+                if (unlockPassword === UNLOCK_PASSWORD) {
+                  togglePaid(unlockTarget.dealId, unlockTarget.idx);
+                  setUnlockTarget(null);
+                  setUnlockPassword("");
+                  showToast("Payment reversed");
+                } else {
+                  showToast("Incorrect password", "error");
+                  setUnlockPassword("");
+                }
+              }}>Confirm</button>
             </div>
           </div>
         </div>
